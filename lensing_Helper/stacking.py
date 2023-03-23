@@ -34,8 +34,8 @@ def get_qsos_outside_mask(nsides, themap, ras, decs):
 
 
 # AzimuthalProj.projmap requires a vec2pix function for some reason, so define one where the nsides are fixed
-def newvec2pix(x, y, z):
-	return hp.vec2pix(nside=4096, x=x, y=y, z=z)
+def newvec2pix(x, y, z, nside=4096):
+	return hp.vec2pix(nside=nside, x=x, y=y, z=z)
 
 
 # perform one iteration of a stack
@@ -55,10 +55,12 @@ def stack_iteration(current_sum, current_weightsum, new_cutout, weight, prob_wei
 
 
 def sum_projections(lon, lat, weights, prob_weights, imsize, reso, inmap, nstack):
+	nside = hp.npix2nside(len(inmap))
 	running_sum, weightsum = np.zeros((imsize, imsize)), np.zeros((imsize, imsize))
 	for j in range(nstack):
 		azproj = hp.projector.AzimuthalProj(rot=[lon[j], lat[j]], xsize=imsize, reso=reso, lamb=True)
-		new_im = weights[j] * convergence_map.set_unseen_to_nan(azproj.projmap(inmap, vec2pix_func=newvec2pix))
+		vec2pixfunc = partial(newvec2pix, nside=nside)
+		new_im = weights[j] * convergence_map.set_unseen_to_nan(azproj.projmap(inmap, vec2pix_func=vec2pixfunc))
 
 		running_sum, weightsum = stack_iteration(running_sum, weightsum, new_im, weights[j], prob_weights[j], imsize)
 
@@ -81,18 +83,18 @@ def stack_chunk(chunksize, nstack, lon, lat, inmap, weighting, prob_weights, ims
 
 
 # stack by computing an average iteratively. this method uses little memory but cannot be parallelized
-def stack_projections(ras, decs, weights=None, prob_weights=None, imsize=240, outname=None, reso=1.5, inmap=None,
+def stack_projections(lons, lats, weights=None, prob_weights=None, imsize=240, outname=None, reso=1.5, inmap=None,
                       nstack=None, mode='normal', chunksize=500):
 	# if no weights provided, weights set to one
 	if weights is None:
-		weights = np.ones(len(ras))
+		weights = np.ones(len(lons))
 	if prob_weights is None:
-		prob_weights = np.ones(len(ras))
+		prob_weights = np.ones(len(lons))
 	# if no limit to number of stacks provided, stack the entire set
 	if nstack is None:
-		nstack = len(ras)
+		nstack = len(lons)
 
-	lons, lats = equatorial_to_galactic(ras, decs)
+	#lons, lats = equatorial_to_galactic(lons, lats)
 
 	if mode == 'normal':
 		totsum, weightsum = sum_projections(lons, lats, weights, prob_weights, imsize, reso, inmap, nstack)
@@ -279,19 +281,24 @@ def annulus_stack_chunk(chunk, vecs, chunksize, stackmap, thetas, nside):
 	else:
 		stepsize = chunksize
 
-	indexbybin = [[] for j in range(len(thetas))]
+	indexbybin = [[] for j in range(len(thetas)-1)]
+
 	# keep track of sum within annuli as well as number of healpixels
 	profile, npix = [], []
 	# for each source
 	for j in range(chunk*chunksize, chunk*chunksize+stepsize):
 		# find all pixels within r= maximum bin edge
-		bigdisc = hp.query_disc(nside, vecs[j], np.radians(thetas[0]))
+		bigdisc = hp.query_disc(nside, vecs[j], np.radians(thetas[0]), inclusive=True)
+
 		# for each bin
-		for k in range(1, len(thetas)):
+		for k in range(0, len(thetas)-1):
 			# find pixels within next smallest radius
-			smalldisc = (hp.query_disc(nside, vecs[j], np.radians(thetas[k])))
+			smalldisc = (hp.query_disc(nside, vecs[j], np.radians(thetas[k+1]), inclusive=True))
+
+
 			# pixels within outer radius but not within smaller radius are those in the annulus of interest
-			indexbybin[k-1] += (np.setdiff1d(bigdisc, smalldisc, assume_unique=True)).tolist()
+			indexbybin[k] += (np.setdiff1d(bigdisc, smalldisc, assume_unique=True)).tolist()
+
 			# set the current radius to the outer radius for the next iteration
 			bigdisc = smalldisc
 
@@ -299,10 +306,14 @@ def annulus_stack_chunk(chunk, vecs, chunksize, stackmap, thetas, nside):
 	for k in range(len(indexbybin)):
 		# index the map using all the indices accumulated by querying annuli around sources
 		kappas = stackmap[indexbybin[k]]
+
 		# sum up the pixel values inside annuli around sources
 		profile.append(np.nansum(kappas))
 		# sum up number of non-masked pixels in annuli around sources
-		npix.append(len(np.where(np.isfinite(kappas))))
+		try:
+			npix.append(len(np.where(np.isfinite(kappas))[0]))
+		except:
+			npix.append(0)
 
 	return [np.flip(profile), np.flip(npix)]
 
@@ -316,9 +327,10 @@ def stack_annuli(stackmap, coords, binparams, nthreads=1, chunksize=None):
 	# bins are from radius=0 to max_theta
 	thetas = np.flip(np.linspace(0, maxtheta, n_theta_bins+1))
 
+
 	# if chunksize not given, use general rule of number of sources / 20
 	if chunksize is None:
-		chunksize = int(len(coords[0]) / 20)
+		chunksize = ceil(len(coords[0]) / 20)
 		# but if chunksize is too big, set to 2000, works well for 32 GB RAM
 		if chunksize > 2000:
 			chunksize = 2000
@@ -337,10 +349,12 @@ def stack_annuli(stackmap, coords, binparams, nthreads=1, chunksize=None):
 		import multiprocessing as mp
 		p = mp.Pool(mp.cpu_count())
 		result = list(p.map(partialst, np.arange(nchunks)))
-		pix_sum, npix = result[0], result[1]
+		result = np.array(result)
+		pix_sum, npix = result[:, 0], result[:, 1]
 	else:
 		result = list(map(partialst, np.arange(nchunks)))
-		pix_sum, npix = result[0], result[1]
+		result = np.array(result)
+		pix_sum, npix = result[:, 0], result[:, 1]
 
 	# average within annuli around sources is the total sum of pixel values / the number of pixels
 	return np.sum(pix_sum, axis=0) / np.sum(npix, axis=0)

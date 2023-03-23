@@ -330,7 +330,7 @@ def sptpol_map(width):
 	w.wcs.crval = [0, -59]
 	w.wcs.crpix = [1260.5, 660.5]
 	w.wcs.ctype = ["RA---ZEA", "DEC--ZEA"]
-	w.wcs.cdelt = np.array([-0.0166667, 0.0166667])
+	w.wcs.cdelt = np.array([0.0166667, -0.0166667])
 	header = w.to_header()
 	flippedarr = np.fliplr(np.flipud(mvarr))
 	hdu = fits.PrimaryHDU(flippedarr, header=header)
