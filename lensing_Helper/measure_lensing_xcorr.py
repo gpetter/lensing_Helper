@@ -1,7 +1,8 @@
 import healpy as hp
 import numpy as np
 from astropy.table import Table
-from healpix_Tools import healpixhelper
+from SkyTools import healpixhelper as myhp
+from SkyTools import coordhelper
 import sys
 import pymaster as nmt
 import os
@@ -39,7 +40,7 @@ def unmasked_sky_fraction(mask1, mask2=None):
 
 def density_map(lons, lats, mask, weights):
 	nside = hp.npix2nside(len(mask))
-	data_density = np.array(healpixhelper.healpix_density_map(lons, lats, nside, weights)).astype(np.float32)
+	data_density = np.array(myhp.healpix_density_map(lons, lats, nside, weights)).astype(np.float32)
 	data_density[np.where(np.logical_not(mask))] = np.nan
 
 	return data_density
@@ -81,6 +82,7 @@ def measure_power_spectrum(ell_bins, map1, mask1, map2=None, mask2=None, master_
 def measure_xcorr(ell_bins, map1, mask1, map2=None, mask2=None,
 				  apodize=None, accurate=True,
 				  noisemap_filenames=None, n_realizations=0):
+	ell_bins = np.array(ell_bins).astype(int)
 	lowedges, highedges = ell_bins[:-1], (ell_bins - 1)[1:]
 	b = nmt.NmtBin.from_edges(lowedges, highedges)
 	eff_ells = b.get_effective_ells()
@@ -104,9 +106,9 @@ def measure_planck_xcorr(ell_bins, coords, mask, weights=None, accurate=True, n_
 	planckmap = hp.read_map(lensing_dir + "Planck18/derived/unsmoothed.fits")
 	planckmask = hp.read_map(lensing_dir + "Planck18/derived/mask.fits")
 	if len(mask) != len(planckmask):
-		mask = healpixhelper.downgrade_mask(mask, newnside=hp.npix2nside(len(planckmask)))
+		mask = myhp.proper_ud_grade_mask(mask, newnside=hp.npix2nside(len(planckmask)))
 
-	ls, bs = healpixhelper.equatorial_to_galactic(coords[0], coords[1])
+	ls, bs = coordhelper.equatorial_to_galactic(coords[0], coords[1])
 	dcmap = density_contrast_map(ls, bs, mask=mask, weights=weights)
 
 	noisenames = glob.glob(lensing_dir + "Planck18/noise/maps/*.fits")[:n_noisemaps]
