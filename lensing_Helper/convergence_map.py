@@ -100,7 +100,7 @@ def klm_2_map(klmname, mapname, nsides):
 	filtered_alm = zero_modes(planck_lensing_alm, 100)
 	# generate map from alm data
 	planck_lensing_map = hp.sphtfunc.alm2map(filtered_alm, nsides, lmax=4096)
-	hp.write_map(mapname, planck_lensing_map, overwrite=True)
+	hp.write_map(mapname, planck_lensing_map, overwrite=True, dtype=float)
 
 
 # smooth map with gaussian of fwhm = width arcminutes
@@ -109,7 +109,7 @@ def smooth_map(mapname, width, outname):
 	fwhm = width/60.*np.pi/180.
 	smoothed_map = hp.sphtfunc.smoothing(map, fwhm=fwhm)
 
-	hp.write_map(outname, smoothed_map, overwrite=True)
+	hp.write_map(outname, smoothed_map, overwrite=True, dtype=float)
 
 
 # mask map and remove the mean field if desired
@@ -122,7 +122,7 @@ def mask_map(map, mask, outmap):
 	masked_map.mask = np.logical_not(importmask)
 	masked_map = masked_map.filled()
 
-	hp.write_map(outmap, masked_map, overwrite=True)
+	hp.write_map(outmap, masked_map, overwrite=True, dtype=float)
 
 
 # input klm file and output final smoothed, masked map for analysis
@@ -180,35 +180,57 @@ def klm_2_product(klmname, width, nsides, lmin, maskname=None, lmax=None, coord=
 		smoothed_masked_map = hp.ma(planck_lensing_map)
 		smoothed_masked_map.mask = np.logical_not(finalmask)
 		if writename:
-			hp.write_map('%s.fits' % writename, smoothed_masked_map.filled(), overwrite=True, dtype=np.single)
+			hp.write_map('%s.fits' % writename, smoothed_masked_map.filled(), overwrite=True, dtype=float)
 	else:
 		if writename:
-			hp.write_map('%s.fits' % writename, planck_lensing_map, overwrite=True, dtype=np.single)
+			hp.write_map('%s.fits' % writename, planck_lensing_map, overwrite=True, dtype=float)
 
 
 
-def write_planck_maps(real, noise, width, nsides, lmin, lmax):
+def write_planck_maps(real, noise, width, nsides, lmin, lmax=None):
 	planckmask = hp.read_map(datadir + 'lensing_maps/Planck18/raw/mask_2048.fits')
 	# apodization will be handled by pymaster, so just downgrade binary mask to correct resolution
 	if hp.npix2nside(len(planckmask)) != nsides:
 		planckmask = downgrade_mask(planckmask, newnside=nsides)
+	if lmax is None:
+		lmax = nsides * 2
 
-	hp.write_map(datadir + 'lensing_maps/Planck18/derived/mask.fits', planckmask, overwrite=True)
+	hp.write_map(datadir + 'lensing_maps/Planck18/derived/%s/mask.fits' % nsides, planckmask, overwrite=True, dtype=float)
 	if real:
 		klm_2_product(klmname=datadir + 'lensing_maps/Planck18/raw/dat_klm.fits', width=0*u.arcmin,
 					  maskname=None, lmax=lmax,
 					  nsides=nsides, lmin=lmin,
-					  writename=datadir + 'lensing_maps/Planck18/derived/unsmoothed')
-		if width > 0:
+					  writename=datadir + 'lensing_maps/Planck18/derived/%s/unsmoothed' % nsides)
+	if width > 0:
 			klm_2_product(klmname=datadir + 'lensing_maps/Planck18/raw/dat_klm.fits', width=width*u.arcmin,
-						  maskname=datadir + 'lensing_maps/Planck18/derived/mask.fits',
+						  maskname=datadir + 'lensing_maps/Planck18/derived/%s/mask.fits' % nsides,
 						  nsides=nsides, lmin=lmin,
-						  writename=datadir + 'lensing_maps/Planck18/derived/smoothed_masked')
+						  writename=datadir + 'lensing_maps/Planck18/derived/%s/smoothed_masked' % nsides)
 	if noise:
 		realsnames = glob.glob(datadir + 'lensing_maps/Planck18/noise/klms/sim*')
 		for j in range(len(realsnames)):
 			klm_2_product(realsnames[j], width=0*u.arcmin, maskname=None, nsides=nsides, lmax=lmax,
-						  lmin=lmin, writename=datadir + 'lensing_maps/Planck18/noise/maps/%s' % j)
+						  lmin=lmin, writename=datadir + 'lensing_maps/Planck18/noise/maps/%s/%s' % (nsides, j))
+
+
+def write_planck_npipe_maps(width, nsides, lmin, lmax):
+	planckmask = hp.read_map(datadir + 'lensing_maps/Planck22_PR3_like/raw/mask.fits.gz')
+	# apodization will be handled by pymaster, so just downgrade binary mask to correct resolution
+	if hp.npix2nside(len(planckmask)) != nsides:
+		planckmask = downgrade_mask(planckmask, newnside=nsides)
+
+	hp.write_map(datadir + 'lensing_maps/Planck22_PR3_like/derived/mask.fits', planckmask, overwrite=True, dtype=float)
+
+	klm_2_product(klmname=datadir + 'lensing_maps/Planck22_PR3_like/raw/dat_MV_klm.fits', width=0*u.arcmin,
+				  maskname=None, lmax=lmax,
+				  nsides=nsides, lmin=lmin,
+				  writename=datadir + 'lensing_maps/Planck22_PR3_like/derived/unsmoothed')
+	if width > 0:
+		klm_2_product(klmname=datadir + 'lensing_maps/Planck22_PR3_like/raw/dat_MV_klm.fits', width=width*u.arcmin,
+					  maskname=datadir + 'lensing_maps/Planck22_PR3_like/derived/mask.fits',
+					  nsides=nsides, lmin=lmin,
+					  writename=datadir + 'lensing_maps/Planck22_PR3_like/derived/smoothed_masked')
+
 
 def write_spt_maps(width, nsides, lmin, lmax, noise=True):
 	sptmask = hp.read_map(datadir + 'lensing_maps/SPT17/raw/mask4096.fits')
@@ -222,7 +244,7 @@ def write_spt_maps(width, nsides, lmin, lmax, noise=True):
 	# downgrade to correct resolution
 	spt_gal_mask = downgrade_mask(spt_gal_mask, newnside=nsides)
 
-	hp.write_map(datadir + 'lensing_maps/SPT17/derived/mask.fits', spt_gal_mask, overwrite=True)
+	hp.write_map(datadir + 'lensing_maps/SPT17/derived/mask.fits', spt_gal_mask, overwrite=True, dtype=float)
 
 
 	klm_2_product(klmname=datadir + 'lensing_maps/SPT17/raw/spt_gal.alm', width=0 * u.arcmin,
@@ -257,7 +279,7 @@ def weak_lensing_map(tomo_bin='tomo4', reconstruction='wiener', width=0*u.arcmin
 	lensmap = hp.read_map('lensing_maps/desy3/%s_%s.fits' % (reconstruction, tomo_bin))
 	desmask = hp.read_map('lensing_maps/desy3/glimpse_mask.fits')
 	lensmap[np.where(np.logical_not(desmask))] = hp.UNSEEN
-	hp.write_map('lensing_maps/desy3/smoothed_masked.fits', lensmap, overwrite=True)
+	hp.write_map('lensing_maps/desy3/smoothed_masked.fits', lensmap, overwrite=True, dtype=float)
 
 
 
